@@ -1,9 +1,8 @@
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from tensorflow.keras.preprocessing.image import img_to_array
+from multiprocessing import Manager, Process
 from tensorflow.keras.models import load_model
 from imutils.video import VideoStream
-from multiprocessing import Manager
-from multiprocessing import Process
 import RPi.GPIO as GPIO
 import numpy as np
 import subprocess
@@ -39,7 +38,7 @@ class ObjCenter:
     def __init__(self, landmarkPath):
         # load OpenCV's Haar cascade face detector
         self.detector = dlib.get_frontal_face_detector()
-        self.predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
+        self.predictor = dlib.shape_predictor(landmarkPath)
 
     def update(self, frame, frameCenter):
         # convert the frame to grayscale
@@ -47,6 +46,8 @@ class ObjCenter:
 
         # detect all faces in the input frame
         faces = self.detector(gray, 0)
+
+        targetX, targetY = frameCenter
 
         # check to see if a face was found
         if len(faces) > 0:
@@ -66,10 +67,11 @@ class ObjCenter:
                                   int((landmarks.part(21).y + landmarks.part(22).y) / 2) - int(dist))
 
             cv2.circle(frame, (face_ptx, face_pty), 3, (0, 255, 0), -1)
+            cv2.circle(frame, (targetX, targetY), 20, (0, 255, 0), 1)
 
             return (face_ptx, face_pty), faces[0], frame
 
-        return frameCenter, None, frame
+        return frameCenter, False, frame
 
 
 class PID:
@@ -177,7 +179,14 @@ class TouchFree:
 
         self.cascade = 'shape_predictor_68_face_landmarks.dat'
 
-        self.alignment = False
+        self.temp_range = [95, 100]
+
+        self.id = 0
+
+    def start_stream(self):
+        self.vs = VideoStream(src=0).start()
+
+        time.sleep(2)
 
     def get_frame(self):  # fix UI Sizing
         frame = self.vs.read()
@@ -186,22 +195,25 @@ class TouchFree:
         return frame
 
     def show_frame(self, final_frame):
+        cv2.putText(final_frame, f'#{self.id+1}', (50, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
         cv2.imshow('TouchFree', final_frame)
         key = cv2.waitKey(1) & 0xFF
 
         return key
 
-    def start_video_stream(self):
-        self.vs = VideoStream(src=0).start()
+    def kill_stream(self):
 
-        time.sleep(2)
+        self.vs.stop()
+
+        del self.vs
 
     def finish(self, sig, frame):
         self.panServo.disable()
         self.tiltServo.disable()
         GPIO.cleanup()
         cv2.destroyAllWindows()
-        self.vs.stop()
+        self.kill_stream()
         sys.exit()
 
     def detect_face_mask(self, frame):
@@ -315,7 +327,12 @@ class TouchFree:
         else:
             return False
 
-    def pid_process(self, output, p, i, d, objCoord, centerCoord):
+    def get_temperature(self):
+        """Find the Temperature using your Sensor"""
+
+        return 99  # Temporary
+
+    def pid_process(self, state, output, p, i, d, objCoord, centerCoord):
         # signal trap to handle keyboard interrupt
         signal.signal(signal.SIGINT, self.finish)
 
@@ -331,11 +348,14 @@ class TouchFree:
             # update the value
             output.value = p.update(error)
 
+            if state.value:
+                break
+
     def in_range(self, val, start, end):
         # determine the input vale is in the supplied range
         return start <= val <= end
 
-    def set_servos(self, pan, tlt):
+    def set_servos(self, state, pan, tlt):
         # signal trap to handle keyboard interrupt
         signal.signal(signal.SIGINT, self.finish)
 
@@ -353,21 +373,26 @@ class TouchFree:
             if self.in_range(tltAngle, self.servoRange[0], self.servoRange[1]):
                 self.tiltServo.setAngle(tltAngle)
 
-    def obj_center(self, objX, objY, centerX, centerY):
+            if state.value:
+                break
+
+    def obj_center(self, state, temp, objX, objY, centerX, centerY):
         # signal trap to handle keyboard interrupt
         signal.signal(signal.SIGINT, self.finish)
 
-        vs = VideoStream(src=0).start()
-
-        time.sleep(2)
+        self.start_stream()
 
         # initialize the object center finder
         obj = ObjCenter(self.cascade)
 
+        count = 0
+
+        start_time = 0
+
         # loop indefinitely
         while True:
             # grab the frame from the threaded video stream
-            frame = vs.read()
+            frame = self.get_frame()
 
             # calculate the center of the frame as this is where we will
             # try to keep the object
@@ -379,15 +404,49 @@ class TouchFree:
 
             ((objX.value, objY.value), rect, final_frame) = objectLoc
 
+            diffX, diffY = centerX.value-objX.value, centerY.value-objY.value
+
             # display the frame to the screen
-            cv2.imshow('TouchFree', final_frame)
-            key = cv2.waitKey(1) & 0xFF
+            key = self.show_frame(final_frame)
+
+            if rect:
+
+                if -20 < diffX < 20 and -20 < diffY < 20:
+                    state.value = 1
+                    temp.value = self.get_temperature()
+                    if count == 0:
+                        start_time = time.time()
+                        cv2.imwrite(f'images/{self.id}.jpg', final_frame)
+
+                    while (time.time() - start_time) < 2:
+
+                        cv2.putText(frame, f'Body Temp: {temp.value} F', (100, 300),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+                        if self.temp_range[0] < temp.value < self.temp_range[1]:
+                            cv2.putText(frame, f'Normal Temperature Detected', (0, 400),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                            cv2.putText(frame, f'You Can Proceed', (100, 500),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        else:
+                            cv2.putText(frame, f'High Temperature Detected', (50, 400),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                            cv2.putText(frame, f'You Cannot Proceed', (100, 400),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        self.show_frame(final_frame)
+
+                    self.kill_stream()
+
+                    break
+            else:
+                cv2.putText(frame, f'Face Not Detected', (100, 400),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, f'Please Remove Mask', (100, 500),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             # if the `q` key was pressed, break from the loop
             if key == ord("q"):
                 break
-
-        self.finish(None, None)
 
     def run_subprocesses(self):
         with Manager() as manager:
@@ -399,7 +458,7 @@ class TouchFree:
             objX = manager.Value("i", 0)
             objY = manager.Value("i", 0)
 
-            # pan and tilt values will be managed by independed PIDs
+            # pan and tilt values will be managed by independent PIDs
             pan = manager.Value("i", 0)
             tlt = manager.Value("i", 0)
 
@@ -413,13 +472,17 @@ class TouchFree:
             tiltI = manager.Value("f", 0.10)
             tiltD = manager.Value("f", 0.002)
 
+            state = manager.Value('i', 0)
+
+            temp = manager.Value('f', 0)
+
             processObjectCenter = Process(target=self.obj_center,
-                                          args=(objX, objY, centerX, centerY))
+                                          args=(state, temp, objX, objY, centerX, centerY))
             processPanning = Process(target=self.pid_process,
-                                     args=(pan, panP, panI, panD, objX, centerX))
+                                     args=(state, pan, panP, panI, panD, objX, centerX))
             processTilting = Process(target=self.pid_process,
-                                     args=(tlt, tiltP, tiltI, tiltD, objY, centerY))
-            processSetServos = Process(target=self.set_servos, args=(pan, tlt))
+                                     args=(state, tlt, tiltP, tiltI, tiltD, objY, centerY))
+            processSetServos = Process(target=self.set_servos, args=(state, pan, tlt))
 
             # start all 4 processes
             processObjectCenter.start()
@@ -433,45 +496,49 @@ class TouchFree:
             processTilting.join()
             processSetServos.join()
 
+            processPanning.close()
+            processTilting.close()
+            processSetServos.close()
+            processObjectCenter.close()
+
             # disable the servos
             self.panServo.disable()
             self.tiltServo.disable()
 
-    def run(self):
+    def main(self):
 
-        self.start_video_stream()
+        self.start_stream()
 
         mask_detected = 0
         hand_sanitized = False
         head_align = False
+        count = 0
+        start_time = 0
+        master_frame = None
 
         self.panServo.setAngle(0)
         self.tiltServo.setAngle(0)
 
         while True:
+
             frame = self.get_frame()
 
             if hand_sanitized:
 
                 if mask_detected >= self.mask_threshold:
-                    label1 = 'Mask Detected'
-                    color = (0, 255, 0)
 
-                    head_align = True
+                    if count == 0:
+                        start_time = time.time()
 
-                    if head_align:
-                        self.alignment = True
-
-                        self.vs.stop()
-                        cv2.destroyAllWindows()
-
-                        time.sleep(2)
-
+                    if (time.time() - start_time) > 2:
+                        self.kill_stream()
                         self.run_subprocesses()
-
+                        break
                     else:
-                        cv2.putText(frame, 'Temperature Detected', (100, 300),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                        label1 = 'Mask Detected'
+                        color = (0, 255, 0)
+
+                    count += 1
 
                 else:
                     # detect faces in the frame and determine if they are wearing a
@@ -494,11 +561,6 @@ class TouchFree:
 
                     cv2.putText(frame, label2, (100, 500),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                else:
-                    label2 = 'You Can Proceed!'
-
-                    cv2.putText(frame, label2, (100, 500),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
                 final_frame = frame
 
@@ -513,7 +575,12 @@ class TouchFree:
             if key == ord("q"):
                 break
 
-        self.finish(None, None)
+    def run(self):
+
+        while True:
+
+            self.main()
+            self.id += 1
 
 
 touchfree = TouchFree()
