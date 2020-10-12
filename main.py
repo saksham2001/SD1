@@ -269,10 +269,10 @@ class TouchFree:
                         if temp > 100:
                             cv2.putText(frame, 'Body Temperature too High! ', (50, 400),
                                         cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
-                            cv2.putText(frame, 'You Cannot Proceed', (50, 300),
+                            cv2.putText(frame, 'You Cannot Proceed', (50, 500),
                                         cv2.FONT_HERSHEY_COMPLEX, 2, (0, 0, 255), 4)
                         else:
-                            cv2.putText(frame, 'Please Proceed! ', (80, 300),
+                            cv2.putText(frame, 'Please Proceed! ', (80, 500),
                                         cv2.FONT_HERSHEY_COMPLEX, 2, (0, 255, 0), 4)
                         self.show_frame(frame)
                         cv2.imwrite('images/{}.jpg'.format(str(self.id)), frame)
@@ -281,7 +281,7 @@ class TouchFree:
                         self.id += 1
                         mask_detected = 0
                         temperature_check_completed = False
-                        time.sleep(3)
+                        time.sleep(4)
 
             else:
                 # detect faces in the frame and determine if they are wearing a
