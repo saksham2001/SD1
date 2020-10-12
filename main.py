@@ -200,7 +200,7 @@ class TouchFree:
 
         return 99  # Temporary
 
-    def main(self):
+    def run(self):
 
         self.vs = None
 
@@ -274,12 +274,13 @@ class TouchFree:
                         else:
                             cv2.putText(frame, 'Please Proceed! ', (80, 300),
                                         cv2.FONT_HERSHEY_COMPLEX, 2, (0, 255, 0), 4)
-
+                        self.show_frame(frame)
                         cv2.imwrite('images/{}.jpg'.format(str(self.id)), frame)
                         if self.send_email:
                             self.email('images/{}.jpg'.format(self.id), temp, 'Wearing')
-                        time.sleep(2)
-                        break
+                        self.id += 1
+                        mask_detected = 0
+                        temperature_check_completed = False
 
             else:
                 # detect faces in the frame and determine if they are wearing a
@@ -310,12 +311,6 @@ class TouchFree:
                 self.finish(None, None)
                 break
 
-    def run(self):
-
-        while True:
-
-            self.main()
-            self.id += 1
 
 
 touchfree = TouchFree()
