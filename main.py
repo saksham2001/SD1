@@ -281,6 +281,7 @@ class TouchFree:
                         self.id += 1
                         mask_detected = 0
                         temperature_check_completed = False
+                        time.sleep(3)
 
             else:
                 # detect faces in the frame and determine if they are wearing a
@@ -310,7 +311,6 @@ class TouchFree:
             if key == ord("q"):
                 self.finish(None, None)
                 break
-
 
 
 touchfree = TouchFree()
