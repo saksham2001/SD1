@@ -217,7 +217,6 @@ class TouchFree:
                         self.email('images/{}.jpg'.format(self.id), 'Wearing')
                     self.id += 1
                     mask_detected = 0
-                    break
                 else:
                     label1 = 'Mask Detected'
                     color = (0, 255, 0)
@@ -243,12 +242,12 @@ class TouchFree:
             if label1 == 'No Mask Detected':
                 label2 = 'STOP'
 
-                cv2.putText(frame, label2, (100, 500),
+                cv2.putText(frame, label2, (100, 400),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             else:
                 label2 = 'You Can Proceed'
 
-                cv2.putText(frame, label2, (100, 500),
+                cv2.putText(frame, label2, (100, 400),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             key = self.show_frame(frame)
