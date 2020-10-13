@@ -2,15 +2,14 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from tensorflow.keras.preprocessing.image import img_to_array
 from tensorflow.keras.models import load_model
 from imutils.video import VideoStream
-import smtplib, ssl
+import smtplib
+import ssl
 from email.mime.multipart import MIMEMultipart
 from email import encoders
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from datetime import datetime
 import numpy as np
-import imutils
-import dlib
 import time
 import cv2
 
@@ -36,7 +35,9 @@ class TouchFree:
 
         # load our serialized face detector model from disk
         self.prototxtPath = r"face_detector/deploy.prototxt"
+        
         self.weightsPath = r"face_detector/res10_300x300_ssd_iter_140000.caffemodel"
+        
         self.faceNet = cv2.dnn.readNet(self.prototxtPath, self.weightsPath)
 
         # load the face mask detector with face model from disk
@@ -50,11 +51,6 @@ class TouchFree:
         self.vs = None
 
         self.mask_threshold = 2
-
-        self.detector = dlib.get_frontal_face_detector()
-        self.predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
-
-        self.temp_range = [95, 100]
 
         self.id = 0
 
@@ -157,7 +153,7 @@ class TouchFree:
 
         return preds
 
-    def email(self, img_path, temp, mask):
+    def email(self, img_path, mask):
         with open(img_path, 'rb') as f:
             # set attachment mime and file name, the image type is png
             mime = MIMEBase('image', 'png', filename='img1.png')
@@ -177,14 +173,13 @@ class TouchFree:
             <body>
                 <h1>Alert</h1>
                 <h2>A new has Person entered the Premises</h2>
-                <h2>Body Temperature: {}</h2>
                 <h2>Mask: {}</h2>
                 <h2>Time: {}</h2>
                 <p>
                     <img src="cid:0">
                 </p>
             </body>
-        </html>'''.format(temp, mask, datetime.now()), 'html', 'utf-8')
+        </html>'''.format(mask, datetime.now()), 'html', 'utf-8')
 
         self.message.attach(body)
 
@@ -195,11 +190,6 @@ class TouchFree:
                 self.sender_email, self.receiver_email, self.message.as_string()
             )
 
-    def get_temperature(self):
-        """Find the Temperature using your Sensor"""
-
-        return 99  # Temporary
-
     def run(self):
 
         self.vs = None
@@ -207,81 +197,32 @@ class TouchFree:
         self.start_stream()
 
         mask_detected = 0
-        temperature_check_completed = False
+        
+        count = 0
+        
+        start_time = 0
 
         while True:
 
             frame = self.get_frame()
 
-            img_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
             if mask_detected >= self.mask_threshold:
+                
+                if count == 0:
+                    start_time = time.time()
+
+                if (time.time() - start_time) > 4:
+                    cv2.imwrite('images/{}.jpg'.format(str(self.id)), frame)
+                    if self.send_email:
+                        self.email('images/{}.jpg'.format(self.id), 'Wearing')
+                    self.id += 1
+                    mask_detected = 0
+                    break
+                else:
                     label1 = 'Mask Detected'
                     color = (0, 255, 0)
 
-                    if temperature_check_completed is False:
-
-                        faces = self.detector(img_gray, 0)
-
-                        if len(faces) > 0:
-
-                            for face in faces:
-
-                                landmarks = self.predictor(img_gray, face)
-
-                                # unpack the 68 landmark coordinates from the dlib object into a list
-                                landmarks_list = []
-                                for i in range(0, landmarks.num_parts):
-                                    landmarks_list.append((landmarks.part(i).x, landmarks.part(i).y))
-
-                                    cv2.circle(frame, (landmarks.part(i).x, landmarks.part(i).y), 2, (255, 255, 255), -1)
-
-                                dist = np.sqrt((landmarks.part(21).x - landmarks.part(22).x) ** 2 + (
-                                        landmarks.part(21).y - landmarks.part(22).y) ** 2)
-
-                                face_ptx, face_pty = (int((landmarks.part(21).x + landmarks.part(22).x) / 2),
-                                                      int((landmarks.part(21).y + landmarks.part(22).y) / 2) - int(
-                                                          dist))
-
-                                cv2.circle(frame, (face_ptx, face_pty), 4, (0, 255, 0), -1)
-
-                                Y, X, _ = frame.shape
-
-                                sensor_ptx, sensor_pty = (int(X / 2), int(Y / 3))
-
-                                cv2.circle(frame, (sensor_ptx, sensor_pty), 20, (255, 0, 0), 2)
-
-                                diff_x, diff_y = sensor_ptx - face_ptx, sensor_pty - face_pty
-                                cv2.putText(frame, f'Distance: {diff_x}, {diff_y}', (0, 700),
-                                            cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
-
-                                if -20 < diff_x < 20 and -20 < diff_y < 20:
-                                    temp = self.get_temperature()
-                                    temperature_check_completed = True
-
-                        else:
-                            cv2.putText(frame, 'No Face Detected Please Remove Mask', (40, 400),
-                                        cv2.FONT_HERSHEY_COMPLEX, 0.8, (0, 0, 255), 2)
-
-                    elif temperature_check_completed:
-                        cv2.putText(frame, 'Body Temp: {}F '.format(temp), (50, 400),
-                                    cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 2)
-                        if temp > 100:
-                            cv2.putText(frame, 'Body Temperature too High! ', (50, 400),
-                                        cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
-                            cv2.putText(frame, 'You Cannot Proceed', (50, 500),
-                                        cv2.FONT_HERSHEY_COMPLEX, 2, (0, 0, 255), 4)
-                        else:
-                            cv2.putText(frame, 'Please Proceed! ', (80, 500),
-                                        cv2.FONT_HERSHEY_COMPLEX, 2, (0, 255, 0), 4)
-                        self.show_frame(frame)
-                        cv2.imwrite('images/{}.jpg'.format(str(self.id)), frame)
-                        if self.send_email:
-                            self.email('images/{}.jpg'.format(self.id), temp, 'Wearing')
-                        self.id += 1
-                        mask_detected = 0
-                        temperature_check_completed = False
-                        time.sleep(4)
+                count += 1
 
             else:
                 # detect faces in the frame and determine if they are wearing a
@@ -304,6 +245,11 @@ class TouchFree:
 
                 cv2.putText(frame, label2, (100, 500),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            else:
+                label2 = 'You Can Proceed'
+
+                cv2.putText(frame, label2, (100, 500),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             key = self.show_frame(frame)
 
