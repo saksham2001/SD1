@@ -35,9 +35,9 @@ class TouchFree:
 
         # load our serialized face detector model from disk
         self.prototxtPath = r"face_detector/deploy.prototxt"
-        
+
         self.weightsPath = r"face_detector/res10_300x300_ssd_iter_140000.caffemodel"
-        
+
         self.faceNet = cv2.dnn.readNet(self.prototxtPath, self.weightsPath)
 
         # load the face mask detector with face model from disk
@@ -197,9 +197,9 @@ class TouchFree:
         self.start_stream()
 
         mask_detected = 0
-        
+
         count = 0
-        
+
         start_time = 0
 
         while True:
@@ -207,21 +207,26 @@ class TouchFree:
             frame = self.get_frame()
 
             if mask_detected >= self.mask_threshold:
-                
+
+                print(time.time() - start_time)
+
                 if count == 0:
                     start_time = time.time()
-
-                if (time.time() - start_time) > 4:
+                elif 100000 > (time.time() - start_time) > 4:
+                    print(time.time() - start_time)
                     cv2.imwrite('images/{}.jpg'.format(str(self.id)), frame)
                     if self.send_email:
                         self.email('images/{}.jpg'.format(self.id), 'Wearing')
                     self.id += 1
                     mask_detected = 0
-                else:
-                    label1 = 'Mask Detected'
-                    color = (0, 255, 0)
+                    start_time = 0
+                    count = 0
 
-                count += 1
+                label1 = 'Mask Detected'
+                color = (0, 255, 0)
+
+                if mask_detected != 0:
+                    count += 1
 
             else:
                 # detect faces in the frame and determine if they are wearing a
